@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <iomanip>
 
+//chip-8
+//
 const int width = 64;
 const int height = 32;
 const int cellsize = 20;
