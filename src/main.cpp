@@ -8,14 +8,24 @@
 
 //chip-8
 //
-const int width = 64;
-const int height = 32;
-const int cellsize = 20;
+const int lowWidth = 64;
+const int lowHeight = 32;
 
-const int screenWidth  = width * cellsize;
-const int screenHeight = height * cellsize;
+const int hiWidth = 128;
+const int hiHeight = 64;
 
-const int instructionsPerFrame = 11;
+const int screenWidth  = 1024;
+const int screenHeight = screenWidth/2;
+
+const int hicellsizeX = screenWidth / hiWidth;
+const int hicellsizeY = screenHeight / hiHeight;
+
+const int locellsizeX = screenWidth / lowWidth;
+const int locellsizeY = screenHeight / lowHeight;
+
+const int CPU_HZ = 1000; 
+const int DISPLAY_HZ = 60;
+const int instructionsPerFrame = CPU_HZ / DISPLAY_HZ;;
 
 
 class cpu {
@@ -43,7 +53,8 @@ class cpu {
 
         };
 
-        bool screen[height][width];
+        bool lowScreen[lowHeight][lowWidth];
+        bool hiScreen[hiHeight][hiWidth];
         uint16_t stack[16];
 
         //regs
@@ -56,6 +67,7 @@ class cpu {
         uint8_t SP = 0; //stack pointer
         bool drawFlag = true;
         bool vblank = false;
+        bool hires = false;
 };
 
 void cycle(cpu& chip8);
@@ -65,14 +77,19 @@ int main( int argc, char *argv[] ) {
 
     cpu chip8; //init cpu object
 
-    for (int i = 0; i < height; i++) {
-        for (int j = 0; j < width; j++) {
-            chip8.screen[i][j] = false;
+    for (int i = 0; i < lowHeight; i++) {
+        for (int j = 0; j < lowWidth; j++) {
+            chip8.lowScreen[i][j] = false;
         }
     } //init screen buffer
+    for (int i = 0; i < hiHeight; i++) {
+        for (int j = 0; j < hiWidth; j++) {
+            chip8.hiScreen[i][j]  = false;
+        }
+    }
 
     if (argc < 2 || argc > 2) {
-        std::cout << "USAGE: ./chip8 [filename].ch8 \n";
+        std::cout << "USAGE: ./schip8 [filename].ch8 \n";
         exit( 1 );
     }
 
@@ -81,7 +98,7 @@ int main( int argc, char *argv[] ) {
     InitAudioDevice();
     Sound beep = LoadSound("sound/beep.wav");
 
-    InitWindow(screenWidth, screenHeight, "CHIP8");
+    InitWindow(screenWidth, screenHeight, "SUPER CHIP8");
     SetTargetFPS(60);
 
     std::cout << "\n\n\n\n";
@@ -141,7 +158,8 @@ int main( int argc, char *argv[] ) {
         // cycle ipf (11) times per frame
         for (int i = 0; i < instructionsPerFrame; i++) {
             cycle(chip8);
-    
+            
+
             uint16_t lastOp = (chip8.mem[chip8.PC - 2] << 8) | chip8.mem[chip8.PC - 1];
             if ((lastOp >> 12) == 0xD) {
                 break;
@@ -155,22 +173,40 @@ int main( int argc, char *argv[] ) {
 
         if (chip8.drawFlag) {
 
-        ClearBackground(BLACK);
-        int yOffset = 0;
-        for (int i = 0; i < height; i++) {
-            int xOffset = 0;
-            for (int j = 0; j < width; j++) {
-                if (chip8.screen[i][j] == true) {
-                    DrawRectangle(xOffset, yOffset, cellsize, cellsize, WHITE);
-                } else {
-                    DrawRectangle(xOffset, yOffset, cellsize, cellsize, BLACK);
-                }
-                xOffset += cellsize;
-            }
-            yOffset += cellsize;
-        }
-        chip8.drawFlag = false;
+            if (!chip8.hires) { //LOW RES MODE
 
+                int yOffset = 0;
+                for (int i = 0; i < lowHeight; i++) {
+                    int xOffset = 0;
+                    for (int j = 0; j < lowWidth; j++) {
+                        if (chip8.lowScreen[i][j] == true) {
+                            DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, WHITE);
+                        } else {
+                            DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, BLACK);
+                        }
+                        xOffset += locellsizeX;
+                    }
+                    yOffset += locellsizeY;
+                }
+                chip8.drawFlag = false;  
+            } else {
+
+                int yOffset = 0;
+                for (int i = 0; i < hiHeight; i++) {
+                    int xOffset = 0;
+                    for (int j = 0; j < hiWidth; j++) {
+                        if (chip8.hiScreen[i][j] == true) {
+                            DrawRectangle(xOffset, yOffset, hicellsizeX, hicellsizeY, WHITE);
+                        } else {
+                            DrawRectangle(xOffset, yOffset, hicellsizeX, hicellsizeY, BLACK);
+                        }
+                        xOffset += hicellsizeX;
+                    }
+                    yOffset += hicellsizeY;
+                }
+                chip8.drawFlag = false;  
+
+            }
         }
 
         if (chip8.sound > 0) {
@@ -211,22 +247,30 @@ void cycle(cpu& chip8) {
 
     uint8_t keyIndex = chip8.regs[vX];
 
+
     // increment
     chip8.PC += 2;
 
     //decode & execute
     switch(inst) {
-        case 0: //00E0 and 00EE
+        case 0: //00CN, 00E0, 00EE, 00FB, 00FC, 00FD, 00FC, 00FF
 
-            switch(N) {
-                case 0:
-                    for (int i = 0; i < height; i++) {
-                        for (int j = 0; j < width; j++) {
-                            chip8.screen[i][j] = false;
+            switch(NN) {
+
+                case 0xE0:
+                    for (int i = 0; i < lowHeight; i++) { //clear low screen
+                        for (int j = 0; j < lowWidth; j++) {
+                            chip8.lowScreen[i][j] = false;
+                        }
+                    }
+                    for (int i = 0; i < hiHeight; i++) { //clear high screen
+                        for (int j = 0; j < hiWidth; j++) {
+                            chip8.hiScreen[i][j]  = false;
                         }
                     }
                     break;
-                case 0xE:
+
+                case 0xEE:
 
                     if (chip8.SP >= 0) {
                         chip8.SP--;
@@ -235,6 +279,18 @@ void cycle(cpu& chip8) {
                         std::cout << "STACK UNDERFLOW! \n";
                     }
 
+                    break;
+
+                case 0xFD: // exit interpreter
+                    exit( 1 );
+                    break;
+
+                case 0xFE: //lores mode
+                    chip8.hires = false;
+                    break;
+
+                case 0xFF: //hires mode
+                    chip8.hires = true;
                     break;
             }
             break;
@@ -297,19 +353,16 @@ void cycle(cpu& chip8) {
                 case 1:
 
                     chip8.regs[vX] |= chip8.regs[vY];
-                    chip8.regs[15] = 0;
 
                     break;
                 case 2:
 
                     chip8.regs[vX] &= chip8.regs[vY];
-                    chip8.regs[15] = 0;
 
                     break;
                 case 3:
 
                     chip8.regs[vX] ^= chip8.regs[vY];
-                    chip8.regs[15] = 0;
 
                     break;
                 case 4:
@@ -337,7 +390,6 @@ void cycle(cpu& chip8) {
                     break;
                 case 6:
                     
-                    chip8.regs[vX] = chip8.regs[vY];
                     chip8.regs[vX] >>= 1;
                     chip8.regs[15] = temp & 0b00000001;
 
@@ -354,7 +406,6 @@ void cycle(cpu& chip8) {
                     break;
                 case 0xE:
 
-                    chip8.regs[vX] = chip8.regs[vY];
                     chip8.regs[vX] <<= 1;
                     chip8.regs[15] = temp >> 7;
 
@@ -374,9 +425,9 @@ void cycle(cpu& chip8) {
             chip8.I = NNN;
                   
             break;
-        case 0xB: //BNNN
+        case 0xB: //BXNN
                   
-            chip8.PC = NNN + chip8.regs[0];
+            chip8.PC = NNN + chip8.regs[vX];
 
             break;
         case 0xC: //CXNN
@@ -384,42 +435,93 @@ void cycle(cpu& chip8) {
             chip8.regs[vX] = random & NN;
 
             break;
-        case 0xD: //DXYN       
+        case 0xD: //DXYN
             {
-            chip8.regs[15] = 0;
+            if (N != 0) { // lores
+                chip8.regs[15] = 0;
 
-            int startX = x % 64; //wrap x and y first!
-            int startY = y % 32;
+            
 
-            for (int row = 0; row < N; row++) {
-                uint8_t spriteByte = chip8.mem[chip8.I + row];
-                
-                for (int bit = 0; bit < 8; bit++) {
+                for (int row = 0; row < N; row++) {
+                    uint8_t spriteByte = chip8.mem[chip8.I + row];
                     
-                    bool pixelOn = (spriteByte >> (7 - bit)) & 1;
+                    for (int bit = 0; bit < 8; bit++) {
+                        
+                        bool pixelOn = (spriteByte >> (7 - bit)) & 1;
 
 
-                    if (pixelOn) {
+                        if (pixelOn) {
 
-                        int scrX = (startX + bit);
-                        int scrY = (startY + row);
+                            if (!chip8.hires) {
+                                int startX = x % 64; //wrap x and y first!
+                                int startY = y % 32;
+                                int scrX = (startX + bit);
+                                int scrY = (startY + row);
+                                
+                                if (scrX >= 0 && scrX < 64 && scrY >= 0 && scrY < 32) { // if out of bounds, AFTER WRAPPING, don't draw
 
-                        if (scrX >= 0 && scrX < 64 && scrY >= 0 && scrY < 32) { // if out of bounds, AFTER WRAPPING, don't draw
+                                    if (chip8.lowScreen[scrY][scrX]) {
+                                        chip8.regs[15] = 1; //collision detected
+                                    }
 
-                            if (chip8.screen[scrY][scrX]) {
-                                chip8.regs[15] = 1; //collision detected
+                                    chip8.lowScreen[scrY][scrX] ^= true;
+                                }   
+                            } else {
+                                int startX = x % 128; 
+                                int startY = y % 64;
+                                int scrX = (startX + bit);
+                                int scrY = (startY + row);
+                                
+                                if (scrX >= 0 && scrX < 128 && scrY >= 0 && scrY < 64) { // if out of bounds, AFTER WRAPPING, don't draw
+
+                                    if (chip8.hiScreen[scrY][scrX]) {
+                                        chip8.regs[15] = 1; //collision detected
+                                    }
+
+                                    chip8.hiScreen[scrY][scrX] ^= true;
+                                }  
+
                             }
-
-                            chip8.screen[scrY][scrX] ^= true;
-                        }   
+                        }
                     }
-
                 }
+            } {
+            } if (N == 0) {
                 
+                chip8.regs[15] = 0;
+
+                int startX = x % 128; //wrap x and y first!
+                int startY = y % 64;
+
+                for (int row = 0; row < 16; row++) {
+                    uint16_t spriteByte = (chip8.mem[chip8.I + row * 2] << 8) | chip8.mem[chip8.I + row * 2 + 1];
+                    
+                    for (int bit = 0; bit < 16; bit++) {
+                        
+                        bool pixelOn = (spriteByte >> (15 - bit)) & 1;
+
+
+                        if (pixelOn) {
+
+                            int scrX = (startX + bit);
+                            int scrY = (startY + row);
+
+                            if (scrX >= 0 && scrX < 128 && scrY >= 0 && scrY < 64) { // if out of bounds, AFTER WRAPPING, don't draw
+
+                                if (chip8.hiScreen[scrY][scrX]) {
+                                    chip8.regs[15] = 1; //collision detected
+                                }
+
+                                chip8.hiScreen[scrY][scrX] ^= true;
+                            }   
+                        }
+                    }
+                }
+
+            }
             }
 
             chip8.drawFlag = true;
-            }
             break;
 
         case 0xE: //EX9E, EXA1
@@ -437,7 +539,7 @@ void cycle(cpu& chip8) {
                   
 
             break;
-        case 0xF: //FX07, FX0A, FX15, FX18, FX1E, FX29, FX33, FX55, FX65
+        case 0xF: //FX07, FX0A, FX15, FX18, FX1E, FX29, FX30, FX33, FX55, FX65
                   
             switch(NN) {
 
@@ -478,12 +580,16 @@ void cycle(cpu& chip8) {
 
                     break;
 
-                case 0x29:
+                case 0x29: //get 5 high font data
 
                     chip8.I = (uint16_t)chip8.regs[vX] * 5;
 
                     break;
+                case 0x30: //get 10 high font data
 
+                    chip8.I = 0x50 + (uint16_t)chip8.regs[vX] * 10;
+
+                    break;
                 case 0x33:
 
                     chip8.mem[chip8.I] = chip8.regs[vX] / 100;
@@ -497,7 +603,6 @@ void cycle(cpu& chip8) {
                     for (int i = 0; i <= vX; ++i) {
                         chip8.mem[chip8.I + i] = chip8.regs[i];
                     }
-                    chip8.I += vX + 1;
 
                     break;
 
@@ -507,15 +612,8 @@ void cycle(cpu& chip8) {
                         chip8.regs[i] = chip8.mem[chip8.I + i];
                     }
 
-                    chip8.I += vX + 1;
                     break;
-
-
-
             }
-
             break;
+        }
     }
-
-}
-
