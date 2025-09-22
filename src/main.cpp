@@ -1,3 +1,6 @@
+#define MINIAUDIO_IMPLEMENTATION
+
+#include "miniaudio.h"
 #include <fstream>
 #include <cstdint>
 #include <iostream>
@@ -6,8 +9,10 @@
 #include <cstdlib>
 #include <iomanip>
 
+
 //chip-8
-//
+
+
 const int lowWidth = 64;
 const int lowHeight = 32;
 
@@ -68,7 +73,26 @@ class cpu {
         bool drawFlag = true;
         bool vblank = false;
         bool hires = false;
+        int audioPitch = 1000; //1000hz
 };
+
+
+void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+    float* pOutputF = (float*)pOutput;
+    // Get the audio pitch from your chip8 object.
+    cpu* chip8 = (cpu*)pDevice->pUserData;
+    double phase_increment = 2.0 * MA_PI * (double)chip8->audioPitch / (double)48000;
+    static double time = 0.0;
+
+    for (ma_uint32 i = 0; i < frameCount; ++i) {
+        float sample = sin(time) * 0.5f;
+        *pOutputF++ = sample;
+        time += phase_increment;
+    }
+    
+    (void)pInput; // Avoid unused parameter warning
+}
+
 
 void cycle(cpu& chip8);
 
@@ -95,8 +119,6 @@ int main( int argc, char *argv[] ) {
 
 
 
-    InitAudioDevice();
-    Sound beep = LoadSound("sound/beep.wav");
 
     InitWindow(screenWidth, screenHeight, "SUPER CHIP8");
     SetTargetFPS(60);
@@ -124,12 +146,38 @@ int main( int argc, char *argv[] ) {
     } else {
         std::cout << "Loading rom file: " << rom << "\n";
     }
+    std::cout << "\n";
+
+    ma_result result;
+    ma_device_config deviceConfig;
+    ma_device device;
+
+    deviceConfig = ma_device_config_init(ma_device_type_playback);
+    deviceConfig.playback.format   = ma_format_f32;
+    deviceConfig.playback.channels = 1;
+    deviceConfig.sampleRate        = 48000;
+    deviceConfig.dataCallback      = data_callback;
+    deviceConfig.pUserData         = &chip8; 
+
+     result = ma_device_init(NULL, &deviceConfig, &device);
+    if (result != MA_SUCCESS) {
+        std::cerr << "Failed to initialize MiniAudio device." << std::endl;
+        return -1;
+    }
+
+    result = ma_device_start(&device);
+    if (result != MA_SUCCESS) {
+        std::cerr << "Failed to start playback device." << std::endl;
+        ma_device_uninit(&device);
+        return -1;
+    }
+
 
     
-
-    std::cout << "\n";
     while (!WindowShouldClose()) {  //main runtime
 
+
+        std::cout << "\a";
         //handle inputs
         chip8.keys[0x1] = IsKeyDown(KEY_ONE);
         chip8.keys[0x2] = IsKeyDown(KEY_TWO);
@@ -210,14 +258,18 @@ int main( int argc, char *argv[] ) {
         }
 
         if (chip8.sound > 0) {
-            PlaySound(beep);
+            if (ma_device_get_state(&device) == ma_device_state_stopped) {
+                ma_device_start(&device);
+            }
+        } else {
+            if (ma_device_get_state(&device) == ma_device_state_started) {
+                ma_device_stop(&device);
+            }
         }
 
         EndDrawing();
 
     }
-    UnloadSound(beep);
-    CloseAudioDevice();
     CloseWindow();
 
     return 1;
@@ -255,8 +307,35 @@ void cycle(cpu& chip8) {
     switch(inst) {
         case 0: //00CN, 00E0, 00EE, 00FB, 00FC, 00FD, 00FC, 00FF
 
-            switch(NN) {
+            if ((opcode & 0x00F0) == 0xC0) { //00CN scroll down N lines
 
+                if (!chip8.hires) {
+                    for (int i = lowHeight - 1; i >= N; i--) {
+                        for (int j = 0; j < (lowWidth - 1); j++) {
+                            chip8.lowScreen[i][j] = chip8.lowScreen[i - N][j];
+                        } 
+                    }
+
+                    for (int i = 0; i < N; i++) {
+                        for (int j = 0; j < lowWidth; j++) {
+                            chip8.lowScreen[i][j] = false;
+                        } 
+                    }
+                } else {
+                    for (int i = hiHeight - 1; i >= N; i--) {
+                        for (int j = 0; j < (hiWidth - 1); j++) {
+                            chip8.hiScreen[i][j] = chip8.hiScreen[i - N][j];
+                        }
+                    }
+
+                    for (int i = 0; i < N; i++) {
+                        for (int j = 0; j < hiWidth; j++) {
+                            chip8.hiScreen[i][j] = false;
+                        }
+                    }
+                }
+            }
+            switch(NN) {
                 case 0xE0:
                     for (int i = 0; i < lowHeight; i++) { //clear low screen
                         for (int j = 0; j < lowWidth; j++) {
