@@ -17,6 +17,7 @@ const int screenHeight = height * cellsize;
 
 const int instructionsPerFrame = 11;
 
+
 class cpu {
     public:
 
@@ -53,6 +54,8 @@ class cpu {
         uint8_t sound = 0;
         bool keys[16] = {false};
         uint8_t SP = 0; //stack pointer
+        bool drawFlag = true;
+        bool vblank = false;
 };
 
 void cycle(cpu& chip8);
@@ -72,6 +75,8 @@ int main( int argc, char *argv[] ) {
         std::cout << "USAGE: ./chip8 [filename].ch8 \n";
         exit( 1 );
     }
+
+
 
     InitAudioDevice();
     Sound beep = LoadSound("sound/beep.wav");
@@ -107,7 +112,7 @@ int main( int argc, char *argv[] ) {
 
     std::cout << "\n";
     while (!WindowShouldClose()) {  //main runtime
-       
+
         //handle inputs
         chip8.keys[0x1] = IsKeyDown(KEY_ONE);
         chip8.keys[0x2] = IsKeyDown(KEY_TWO);
@@ -136,13 +141,21 @@ int main( int argc, char *argv[] ) {
         // cycle ipf (11) times per frame
         for (int i = 0; i < instructionsPerFrame; i++) {
             cycle(chip8);
+    
+            uint16_t lastOp = (chip8.mem[chip8.PC - 2] << 8) | chip8.mem[chip8.PC - 1];
+            if ((lastOp >> 12) == 0xD) {
+                break;
+            }
+
+
         } 
-
-
-        ClearBackground(BLACK);
 
         //draw screenbuffer every frame
 
+
+        if (chip8.drawFlag) {
+
+        ClearBackground(BLACK);
         int yOffset = 0;
         for (int i = 0; i < height; i++) {
             int xOffset = 0;
@@ -156,10 +169,10 @@ int main( int argc, char *argv[] ) {
             }
             yOffset += cellsize;
         }
-      
-        int op = (chip8.mem[chip8.PC] << 8 | chip8.mem[chip8.PC + 1]);
+        chip8.drawFlag = false;
 
-        DrawText(TextFormat("CURRENT INSTRUCTION: %i", op), 0, 0, 20, RED);
+        }
+
         if (chip8.sound > 0) {
             PlaySound(beep);
         }
@@ -372,34 +385,41 @@ void cycle(cpu& chip8) {
 
             break;
         case 0xD: //DXYN       
-
+            {
             chip8.regs[15] = 0;
+
+            int startX = x % 64; //wrap x and y first!
+            int startY = y % 32;
+
             for (int row = 0; row < N; row++) {
                 uint8_t spriteByte = chip8.mem[chip8.I + row];
-                if (x > 63) { 
-                    x = x % 64;
-                }
-                if (y > 31) {
-                    y = y % 32;
-                }
-
+                
                 for (int bit = 0; bit < 8; bit++) {
                     
                     bool pixelOn = (spriteByte >> (7 - bit)) & 1;
-                    int scrX = (x + bit) % 64;
-                    int scrY = y + row;
+
 
                     if (pixelOn) {
 
-                        if (chip8.screen[scrY][scrX]) {
-                            chip8.regs[15] = 1; //collision detected
-                        }
-                        chip8.screen[scrY][scrX] ^= true;
+                        int scrX = (startX + bit);
+                        int scrY = (startY + row);
+
+                        if (scrX >= 0 && scrX < 64 && scrY >= 0 && scrY < 32) { // if out of bounds, AFTER WRAPPING, don't draw
+
+                            if (chip8.screen[scrY][scrX]) {
+                                chip8.regs[15] = 1; //collision detected
+                            }
+
+                            chip8.screen[scrY][scrX] ^= true;
+                        }   
                     }
 
                 }
+                
             }
 
+            chip8.drawFlag = true;
+            }
             break;
 
         case 0xE: //EX9E, EXA1
@@ -477,6 +497,7 @@ void cycle(cpu& chip8) {
                     for (int i = 0; i <= vX; ++i) {
                         chip8.mem[chip8.I + i] = chip8.regs[i];
                     }
+                    chip8.I += vX + 1;
 
                     break;
 
@@ -486,6 +507,7 @@ void cycle(cpu& chip8) {
                         chip8.regs[i] = chip8.mem[chip8.I + i];
                     }
 
+                    chip8.I += vX + 1;
                     break;
 
 
@@ -494,5 +516,6 @@ void cycle(cpu& chip8) {
 
             break;
     }
+
 }
 
