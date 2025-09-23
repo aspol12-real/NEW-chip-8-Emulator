@@ -19,11 +19,11 @@ const int lowHeight = 32;
 const int hiWidth = 128;
 const int hiHeight = 64;
 
-const int screenSpaceX  = 1024;
+const int screenSpaceX  = 512;
 const int screenSpaceY = screenSpaceX/2;
 
 const int screenMarginSides = 300;
-const int screenMarginBottom = 200;
+const int screenMarginBottom = 300;
 
 const int screenWidth = screenSpaceX + screenMarginSides * 2;
 const int screenHeight = screenSpaceY + screenMarginBottom;
@@ -356,7 +356,7 @@ int main( int argc, char *argv[] ) {
         }
         if(chip8.debugOverlay) {
             DrawText("DEBUG", 0, 0, 20, RED);
-            DrawText(TextFormat("CURRENT INSTRUCTION: %04X", (chip8.mem[chip8.PC] << 8) | chip8.mem[chip8.PC + 1]), 0, screenSpaceY + 50, 20, RED);
+            DrawText(TextFormat("CURRENT INSTRUCTION: %04X", (chip8.mem[chip8.PC] << 8) | chip8.mem[chip8.PC + 1]), 100, screenSpaceY + 50, 20, RED);
             DrawText(TextFormat("V0 = %d", chip8.regs[0]), 0, 50, 20, RED);
             DrawText(TextFormat("V1 = %d", chip8.regs[1]), 0, 70, 20, RED);
             DrawText(TextFormat("V2 = %d", chip8.regs[2]), 0, 90, 20, RED);
@@ -375,12 +375,12 @@ int main( int argc, char *argv[] ) {
             DrawText(TextFormat("VF = %d", chip8.regs[15]), 0, 350, 20, RED);
             DrawText(TextFormat("I = %d", chip8.I), (screenWidth - 100), 0, 20, RED);
             DrawText(TextFormat("BITPLANE = %d", chip8.selectedPlane), (screenWidth - 200), 60, 20, RED);
-            DrawText(TextFormat("STACK = [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d]", chip8.stack[0], chip8.stack[1], chip8.stack[2], chip8.stack[3], chip8.stack[4], chip8.stack[5], chip8.stack[6], chip8.stack[7], chip8.stack[8], chip8.stack[9], chip8.stack[10], chip8.stack[12], chip8.stack[13], chip8.stack[14], chip8.stack[15]), (screenWidth - 1200), screenSpaceY + 30, 20, RED);
+            DrawText(TextFormat("STACK = [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d]", chip8.stack[0], chip8.stack[1], chip8.stack[2], chip8.stack[3], chip8.stack[4], chip8.stack[5], chip8.stack[6], chip8.stack[7], chip8.stack[8], chip8.stack[9], chip8.stack[10], chip8.stack[12], chip8.stack[13], chip8.stack[14], chip8.stack[15]), 100, screenSpaceY + 20, 20, RED);
             DrawText(TextFormat("DELAY = %d", chip8.delay), 0, 390, 20, RED);
             DrawText(TextFormat("SOUND = %d", chip8.sound), 0, 410, 20, RED);
             DrawText(TextFormat("SP = %d", chip8.SP), 0, 430, 20, RED);
 
-            DrawText("Current Sprite:", 0, screenSpaceY + 80, 20, RED);
+            DrawText("Current Sprite:", 100, screenSpaceY + 80, 20, RED);
             if (chip8.I < 512 && chip8.I > 80) {
                 spriteHeight = 10;
             } else if (chip8.I < 512 && chip8.I < 80) {
@@ -389,7 +389,7 @@ int main( int argc, char *argv[] ) {
                 spriteHeight = (chip8.mem[chip8.PC + 1] & 0x0F);
             }
 
-            int yOffset = screenSpaceY + 50;
+            int yOffset = screenSpaceY + 100;
             for (int i = 0; i < spriteHeight; i++) {
                 uint8_t spriteByte = chip8.mem[chip8.I + i];
                 int xOffset = screenMarginSides + 30;
@@ -433,7 +433,7 @@ int main( int argc, char *argv[] ) {
                 yOffset3 += 1;
             }
 
-            int yOffset4 = 400;
+            int yOffset4 = 300;
             for (int i = 0; i < hiHeight; i++) {
                 int xOffset = screenMarginSides + screenSpaceX + 30;
                 for (int j = 0; j < hiWidth; j++) {        
@@ -446,7 +446,7 @@ int main( int argc, char *argv[] ) {
                 }
                 yOffset4 += 1;
             }
-            int yOffset5 = 600;
+            int yOffset5 = 400;
             for (int i = 0; i < hiHeight; i++) {
                 int xOffset = screenMarginSides + screenSpaceX + 30;
                 for (int j = 0; j < hiWidth; j++) {        
