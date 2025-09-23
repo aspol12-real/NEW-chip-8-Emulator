@@ -1,6 +1,6 @@
 CXX = g++
 SRC = src/main.cpp
-EXEC = schip8
+EXEC = chip8
 LDFLAGS = -lraylib -lGL -lm -lpthread -ldl -lrt 
 
 all: $(EXEC)

@@ -34,10 +34,8 @@ const int hicellsizeY = screenSpaceY / hiHeight;
 const int locellsizeX = screenSpaceX / lowWidth;
 const int locellsizeY = screenSpaceY / lowHeight;
 
-const int DISPLAY_HZ = 60;
 
-int CPU_HZ = 1000; 
-int instructionsPerFrame = CPU_HZ / DISPLAY_HZ;
+int instructionsPerFrame = 11;
 
 int spriteHeight;
 
@@ -45,7 +43,7 @@ class cpu {
     public:
 
         //memory
-        uint8_t mem[4096] = {
+        uint8_t mem[65535] = {
         
             // regular characters 0-F
 
@@ -66,7 +64,7 @@ class cpu {
             0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
             0xF0, 0x80, 0xF0, 0x80, 0x80, // F
                                           
-            //BIG HEX 0-9
+            //BIG HEX 0-F
 
             0x3C, 0x7E, 0xE7, 0xC3, 0xC3, 0xC3, 0xC3, 0xE7, 0x7E, 0x3C, //0
             0x30, 0x70, 0xB0, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x78, //1
@@ -77,12 +75,24 @@ class cpu {
             0x3E, 0x7C, 0xE0, 0xC0, 0xFC, 0xFE, 0xC3, 0xC3, 0x7E, 0x3C, //6
             0xFF, 0xFF, 0x03, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x60, 0x60, //7
             0x3C, 0x7E, 0xC3, 0xC3, 0x7E, 0x7E, 0xC3, 0xC3, 0x7E, 0x3C, //8
-            0x3C, 0x7E, 0xC3, 0xC3, 0x7F, 0x3F, 0x03, 0x03, 0x3E, 0x7C  //9
+            0x3C, 0x7E, 0xC3, 0xC3, 0x7F, 0x3F, 0x03, 0x03, 0x3E, 0x7C, //9
+            0x7E, 0xFF, 0xC3, 0xC3, 0xC3, 0xFF, 0xFF, 0xC3, 0xC3, 0xC3, //A
+            0xFC, 0xFC, 0xC3, 0xC3, 0xFC, 0xFC, 0xC3, 0xC3, 0xFC, 0xFC, //B
+            0x3C, 0xFF, 0xC3, 0xC0, 0xC0, 0xC0, 0xC0, 0xC3, 0xFF, 0x3C, //C
+            0xFC, 0xFE, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xFE, 0xFC, //D
+            0xFF, 0xFF, 0xC0, 0xC0, 0xFF, 0xFF, 0xC0, 0xC0, 0xFF, 0xFF, //E
+            0xFF, 0xFF, 0xC0, 0xC0, 0xFF, 0xFF, 0xC0, 0xC0, 0xC0, 0xC0, //F
+
 
         };
 
-        bool lowScreen[lowHeight][lowWidth];
-        bool hiScreen[hiHeight][hiWidth];
+        bool lowPlane1[lowHeight][lowWidth];
+        bool lowPlane2[lowHeight][lowWidth];
+
+        bool hiPlane1[hiHeight][hiWidth];
+        bool hiPlane2[hiHeight][hiWidth];
+
+
         uint16_t stack[16];
 
         //regs
@@ -93,19 +103,33 @@ class cpu {
         uint8_t sound = 0;
         bool keys[16] = {false};
         uint8_t SP = 0; //stack pointer
+
+        //system flags
         bool vblank = false;
         bool hires = false;
-        int audioPitch = 1000; //1000hz
+        bool bitplane1 = true;
+        bool bitplane2 = false; 
+
+        int selectedPlane = 3;
+
+        //debug flags
         bool debugOverlay = false;
-        bool paused;
+        bool paused = false;
+
+        //attributes
+        int audioPitch = 1000; //1000hz by default
+
 };
+
 
 
 void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
     float* pOutputF = (float*)pOutput;
-    // Get the audio pitch from your chip8 object.
+
     cpu* chip8 = (cpu*)pDevice->pUserData;
+
     double phase_increment = 2.0 * MA_PI * (double)chip8->audioPitch / (double)48000;
+
     static double time = 0.0;
 
     for (ma_uint32 i = 0; i < frameCount; ++i) {
@@ -114,30 +138,29 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
         time += phase_increment;
     }
     
-    (void)pInput; // Avoid unused parameter warning
-}
-
+    (void)pInput; 
+    }
 
 void cycle(cpu& chip8);
 void cls(cpu& chip8);
-
+void checkF000(cpu& chip8);
 
 int main( int argc, char *argv[] ) {
     cpu chip8; //init cpu object
 
     for (int i = 0; i < lowHeight; i++) {
         for (int j = 0; j < lowWidth; j++) {
-            chip8.lowScreen[i][j] = false;
+            chip8.lowPlane1[i][j] = false;
         }
     } //init screen buffer
     for (int i = 0; i < hiHeight; i++) {
         for (int j = 0; j < hiWidth; j++) {
-            chip8.hiScreen[i][j]  = false;
+            chip8.hiPlane1[i][j]  = false;
         }
     }
 
     if (argc < 2) {
-        std::cout << "USAGE: ./schip8 [filename].ch8 \n";
+        std::cout << "USAGE: ./chip8 [filename].ch8 \n";
         exit( 1 );
     }
 
@@ -146,7 +169,7 @@ int main( int argc, char *argv[] ) {
         chip8.stack[i] = 0; //initialize stack to be empty
     }
 
-    InitWindow(screenWidth, screenHeight, "SUPER CHIP8");
+    InitWindow(screenWidth, screenHeight, "XO-CHIP");
     SetTargetFPS(60);
 
     std::cout << "\n\n\n\n";
@@ -197,11 +220,17 @@ int main( int argc, char *argv[] ) {
         return -1;
     }
 
+    Color richblack = {3, 25, 38, 255};
+    Color teal      = {70, 129, 137, 255};
+    Color cambridge = {119, 172, 162, 255};
+    Color ash       = {157, 190, 187, 255};
+    Color parchment = {244, 233, 205, 255};
 
-    
+    cls(chip8); //clear screenbuffers
+
+
     while (!WindowShouldClose()) {  //main runtime
 
-        instructionsPerFrame = CPU_HZ / DISPLAY_HZ;;
 
         //handle inputs
         chip8.keys[0x1] = IsKeyDown(KEY_ONE);
@@ -229,11 +258,7 @@ int main( int argc, char *argv[] ) {
         if (IsKeyPressed(KEY_SEVEN)) { //step
             cycle(chip8);
         }
-        if (IsKeyDown(KEY_SPACE)) {
-            CPU_HZ = 2000;
-        } else {
-            CPU_HZ = 1000; 
-        }
+
         if (IsKeyPressed(KEY_EIGHT)) { //reset
             cls(chip8);
             for (int i = 0; i < 16; i++) {
@@ -244,6 +269,7 @@ int main( int argc, char *argv[] ) {
                 chip8.regs[i] = 0;
             }
             chip8.PC = 512;
+            chip8.I = 0;
         }
         if (IsKeyPressed(KEY_TAB)) {
             chip8.debugOverlay = true;
@@ -265,12 +291,6 @@ int main( int argc, char *argv[] ) {
                 cycle(chip8);
                 
 
-                uint16_t lastOp = (chip8.mem[chip8.PC - 2] << 8) | chip8.mem[chip8.PC - 1];
-                if ((lastOp >> 12) == 0xD) {
-                    break;
-                }
-
-
             } 
         }
 
@@ -289,10 +309,14 @@ int main( int argc, char *argv[] ) {
             for (int i = 0; i < lowHeight; i++) {
                 int xOffset = screenMarginSides;
                 for (int j = 0; j < lowWidth; j++) {
-                    if (chip8.lowScreen[i][j] == true) {
-                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, WHITE);
-                    } else {
-                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, BLACK);
+                    if (chip8.lowPlane1[i][j] && chip8.lowPlane2[i][j]) {         //both
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, parchment);
+                    } else if (!chip8.lowPlane1[i][j] && chip8.lowPlane2[i][j]) { //only plane 2
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, cambridge);
+                    } else if (chip8.lowPlane1[i][j] && !chip8.lowPlane2[i][j]) { //only plane 1
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, teal);
+                    } else if (!chip8.lowPlane1[i][j] && !chip8.lowPlane2[i][j]) { //neither
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, richblack);
                     }
                     xOffset += locellsizeX;
                 }
@@ -304,10 +328,14 @@ int main( int argc, char *argv[] ) {
             for (int i = 0; i < hiHeight; i++) {
                 int xOffset = screenMarginSides;
                 for (int j = 0; j < hiWidth; j++) {
-                    if (chip8.hiScreen[i][j] == true) {
-                        DrawRectangle(xOffset, yOffset, hicellsizeX, hicellsizeY, WHITE);
-                    } else {
-                        DrawRectangle(xOffset, yOffset, hicellsizeX, hicellsizeY, BLACK);
+                    if (chip8.hiPlane1[i][j] && chip8.hiPlane2[i][j]) {         //both
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, parchment);
+                    } else if (!chip8.hiPlane1[i][j] && chip8.hiPlane2[i][j]) { //only plane 2
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, cambridge);
+                    } else if (chip8.hiPlane1[i][j] && !chip8.hiPlane2[i][j]) { //only plane 1
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, teal);
+                    } else if (!chip8.hiPlane1[i][j] && !chip8.hiPlane2[i][j]) { //neither
+                        DrawRectangle(xOffset, yOffset, locellsizeX, locellsizeY, richblack);
                     }
                     xOffset += hicellsizeX;
                 }
@@ -346,17 +374,19 @@ int main( int argc, char *argv[] ) {
             DrawText(TextFormat("VE = %d", chip8.regs[14]), 0, 330, 20, RED);
             DrawText(TextFormat("VF = %d", chip8.regs[15]), 0, 350, 20, RED);
             DrawText(TextFormat("I = %d", chip8.I), (screenWidth - 100), 0, 20, RED);
-            DrawText(TextFormat("EXEC HZ = %d", CPU_HZ), (screenWidth - 200), 30, 20, RED);
-            DrawText(TextFormat("STACK = [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d]", chip8.stack[0], chip8.stack[1], chip8.stack[2], chip8.stack[3], chip8.stack[4], chip8.stack[5], chip8.stack[6], chip8.stack[7], chip8.stack[8], chip8.stack[9], chip8.stack[10], chip8.stack[12], chip8.stack[13], chip8.stack[14], chip8.stack[15]), (screenWidth - 700), screenSpaceY + 30, 20, RED);
+            DrawText(TextFormat("BITPLANE = %d", chip8.selectedPlane), (screenWidth - 200), 60, 20, RED);
+            DrawText(TextFormat("STACK = [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d]", chip8.stack[0], chip8.stack[1], chip8.stack[2], chip8.stack[3], chip8.stack[4], chip8.stack[5], chip8.stack[6], chip8.stack[7], chip8.stack[8], chip8.stack[9], chip8.stack[10], chip8.stack[12], chip8.stack[13], chip8.stack[14], chip8.stack[15]), (screenWidth - 1200), screenSpaceY + 30, 20, RED);
             DrawText(TextFormat("DELAY = %d", chip8.delay), 0, 390, 20, RED);
             DrawText(TextFormat("SOUND = %d", chip8.sound), 0, 410, 20, RED);
             DrawText(TextFormat("SP = %d", chip8.SP), 0, 430, 20, RED);
 
             DrawText("Current Sprite:", 0, screenSpaceY + 80, 20, RED);
-            if (chip8.I < 512) {
+            if (chip8.I < 512 && chip8.I > 80) {
                 spriteHeight = 10;
+            } else if (chip8.I < 512 && chip8.I < 80) {
+                spriteHeight = 5;
             } else {
-                spriteHeight = 8;
+                spriteHeight = (chip8.mem[chip8.PC + 1] & 0x0F);
             }
 
             int yOffset = screenSpaceY + 50;
@@ -374,6 +404,60 @@ int main( int argc, char *argv[] ) {
                         xOffset += hicellsizeX;
                 }
                 yOffset += hicellsizeY;
+            }
+
+            int yOffset2 = 100;
+            for (int i = 0; i < lowHeight; i++) {
+                int xOffset = screenMarginSides + screenSpaceX + 30;
+                for (int j = 0; j < lowWidth; j++) {        
+                        if (chip8.lowPlane1[i][j]) {
+                            DrawRectangle(xOffset, yOffset2, 1, 1, WHITE);  
+                        } else {
+                            DrawRectangle(xOffset, yOffset2, 1, 1, BLACK); 
+                        }
+                        xOffset += 1;
+                }
+                yOffset2 += 1;
+            }
+            int yOffset3 = 200;
+            for (int i = 0; i < lowHeight; i++) {
+                int xOffset = screenMarginSides + screenSpaceX + 30;
+                for (int j = 0; j < lowWidth; j++) {        
+                        if (chip8.lowPlane2[i][j]) {
+                            DrawRectangle(xOffset, yOffset3, 1, 1, WHITE);  
+                        } else {
+                            DrawRectangle(xOffset, yOffset3, 1, 1, BLACK); 
+                        }
+                        xOffset += 1;
+                }
+                yOffset3 += 1;
+            }
+
+            int yOffset4 = 400;
+            for (int i = 0; i < hiHeight; i++) {
+                int xOffset = screenMarginSides + screenSpaceX + 30;
+                for (int j = 0; j < hiWidth; j++) {        
+                        if (chip8.hiPlane1[i][j]) {
+                            DrawRectangle(xOffset, yOffset4, 1, 1, WHITE);  
+                        } else {
+                            DrawRectangle(xOffset, yOffset4, 1, 1, BLACK); 
+                        }
+                        xOffset += 1;
+                }
+                yOffset4 += 1;
+            }
+            int yOffset5 = 600;
+            for (int i = 0; i < hiHeight; i++) {
+                int xOffset = screenMarginSides + screenSpaceX + 30;
+                for (int j = 0; j < hiWidth; j++) {        
+                        if (chip8.hiPlane2[i][j]) {
+                            DrawRectangle(xOffset, yOffset5, 1, 1, WHITE);  
+                        } else {
+                            DrawRectangle(xOffset, yOffset5, 1, 1, BLACK); 
+                        }
+                        xOffset += 1;
+                }
+                yOffset5 += 1;
             }
 
         
@@ -399,20 +483,20 @@ void cycle(cpu& chip8) {
     uint16_t opcode = (chip8.mem[chip8.PC] << 8) | chip8.mem[chip8.PC + 1];
 
     uint8_t inst =   opcode >> 12;
-    uint8_t vX   =  (opcode & 0x0F00) >> 8;
-    uint8_t vY   =  (opcode & 0x00F0) >> 4;
+    uint8_t X   =  (opcode & 0x0F00) >> 8;
+    uint8_t Y   =  (opcode & 0x00F0) >> 4;
     uint8_t N    =   opcode & 0x000F;
     uint8_t NN   =   opcode & 0x00FF;
     uint16_t NNN =   opcode & 0x0FFF;
 
     //for DXYN exclusively
-    uint8_t x = chip8.regs[vX];
-    uint8_t y = chip8.regs[vY];
+    uint8_t x = chip8.regs[X];
+    uint8_t y = chip8.regs[Y];
 
     uint8_t random = rand() % 0xFF; //gen random number
-    uint8_t temp = chip8.regs[vX];
+    uint8_t temp = chip8.regs[X];
 
-    uint8_t keyIndex = chip8.regs[vX];
+    uint8_t keyIndex = chip8.regs[X];
 
 
     // increment
@@ -427,28 +511,59 @@ void cycle(cpu& chip8) {
                 if (!chip8.hires) {
                     for (int i = lowHeight - 1; i >= N; i--) {
                         for (int j = 0; j < (lowWidth - 1); j++) {
-                            chip8.lowScreen[i][j] = chip8.lowScreen[i - N][j];
+                            chip8.lowPlane1[i][j] = chip8.lowPlane1[i - N][j];
                         } 
                     }
 
                     for (int i = 0; i < N; i++) {
                         for (int j = 0; j < lowWidth; j++) {
-                            chip8.lowScreen[i][j] = false;
+                            chip8.lowPlane1[i][j] = false;
                         } 
                     }
                 } else {
                     for (int i = hiHeight - 1; i >= N; i--) {
                         for (int j = 0; j < (hiWidth - 1); j++) {
-                            chip8.hiScreen[i][j] = chip8.hiScreen[i - N][j];
+                            chip8.hiPlane1[i][j] = chip8.hiPlane1[i - N][j];
                         }
                     }
 
                     for (int i = 0; i < N; i++) {
                         for (int j = 0; j < hiWidth; j++) {
-                            chip8.hiScreen[i][j] = false;
+                            chip8.hiPlane1[i][j] = false;
                         }
                     }
                 }
+            }
+            if ((opcode & 0x00F0) == 0xD0) { //00DN scroll hires bitplane up N pixels
+
+                if (chip8.hires) {
+
+                    if(chip8.bitplane1) {
+                        for (int i = 0; i <= N; i++) {
+                            for (int j = 0; j < (hiWidth - 1); j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i + N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < lowWidth; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                            } 
+                        }
+                    } else {
+                        for (int i = 0; i <= N; i++) {
+                            for (int j = 0; j < (hiWidth - 1); j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i + N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < lowWidth; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                            } 
+                        }
+                    }
+                } 
             }
             switch(NN) {
 
@@ -458,28 +573,28 @@ void cycle(cpu& chip8) {
                     if (!chip8.hires) {
                             for (int i = 0; i < lowHeight; i++) {
                                 for (int j = lowWidth - 1; j >= 4; j--) {
-                                    chip8.lowScreen[i][j] = chip8.lowScreen[i][j + 4];  
+                                    chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j + 4];  
                                 }
                             }
 
                             //clean 4 rightmost columns
                             for (int i = 0; i < lowHeight; i++) {
                                 for (int j = lowWidth - 4; j < lowWidth; j++) {
-                                    chip8.lowScreen[i][j] = false;
+                                    chip8.lowPlane1[i][j] = false;
                                 }
                             }
 
                         } else {
                             for (int i = 0; i < hiHeight; i++) {
                                 for (int j = hiWidth - 1; j >= 4; j--) {
-                                    chip8.hiScreen[i][j] = chip8.hiScreen[i][j + 4];  
+                                    chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j + 4];  
                                 }
                             }
 
                             //clean 4 rightmost columns
                             for (int i = 0; i < hiHeight; i++) {
                                 for (int j = hiWidth - 4; j < hiWidth; j++) {
-                                    chip8.hiScreen[i][j] = false;
+                                    chip8.hiPlane1[i][j] = false;
                                 }
                             }
 
@@ -490,34 +605,33 @@ void cycle(cpu& chip8) {
                     if (!chip8.hires) {
                         for (int i = 0; i < lowHeight; i++) {
                             for (int j = 0 ; j < lowWidth - 4; j++) {
-                                chip8.lowScreen[i][j] = chip8.lowScreen[i][j - 4];  
+                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j - 4];  
                             }
                         }
 
                         //clean 4 leftmost columns
                         for (int i = 0; i < lowHeight; i++) {
                             for (int j = 0; j < 3; j++) {
-                                chip8.lowScreen[i][j] = false;
+                                chip8.lowPlane1[i][j] = false;
                             }
                         }
 
                     } else {
                         for (int i = 0; i < hiHeight; i++) {
                             for (int j = 0; j < hiWidth - 4; j++) {
-                                chip8.hiScreen[i][j] = chip8.hiScreen[i][j - 4];  
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j - 4];  
                             }
                         }
 
                         //clean 4 leftmost columns
                         for (int i = 0; i < hiHeight; i++) {
                             for (int j = 0; j < 3; j++) {
-                                chip8.hiScreen[i][j] = false;
+                                chip8.hiPlane1[i][j] = false;
                             }
                         }
 
                     }
 
-                    break;
                     break;
 
                 case 0xE0:
@@ -563,38 +677,39 @@ void cycle(cpu& chip8) {
                 chip8.SP++;
             } else {
                 std::cout << "STACK OVERFLOW! \n";
+                exit( 1 ); 
             }
 
             break;
         case 3: //3XNN
                 
-            if (chip8.regs[vX] == NN) {
+            if (chip8.regs[X] == NN) {
                 chip8.PC += 2;
             }
 
             break;
         case 4: //4XNN
                 
-            if (chip8.regs[vX] != NN) {
+            if (chip8.regs[X] != NN) {
                 chip8.PC += 2;
             }
 
             break;
         case 5: //5XY0
                 
-            if (chip8.regs[vX] == chip8.regs[vY]) {
+            if (chip8.regs[X] == chip8.regs[Y]) {
                 chip8.PC += 2;
             }
 
             break;
         case 6: //6XNN
                 
-            chip8.regs[vX] = NN;
+            chip8.regs[X] = NN;
 
             break;
         case 7: //7XNN
                 
-            chip8.regs[vX] += NN;
+            chip8.regs[X] += NN;
 
             break;
         case 8: //8XY0, 8XY1, 8XY2, 8XY3, 8XY4, 8XY5, 8XY6, 8XY7, 8XYE
@@ -602,28 +717,28 @@ void cycle(cpu& chip8) {
             switch(N) {
                 case 0:
 
-                    chip8.regs[vX] = chip8.regs[vY];
+                    chip8.regs[X] = chip8.regs[Y];
 
                     break;
                 case 1:
 
-                    chip8.regs[vX] |= chip8.regs[vY];
+                    chip8.regs[X] |= chip8.regs[Y];
 
                     break;
                 case 2:
 
-                    chip8.regs[vX] &= chip8.regs[vY];
+                    chip8.regs[X] &= chip8.regs[Y];
 
                     break;
                 case 3:
 
-                    chip8.regs[vX] ^= chip8.regs[vY];
+                    chip8.regs[X] ^= chip8.regs[Y];
 
                     break;
                 case 4:
                     {
-                    int result = chip8.regs[vX] + chip8.regs[vY];
-                    chip8.regs[vX] = (result % 256);
+                    int result = chip8.regs[X] + chip8.regs[Y];
+                    chip8.regs[X] = (result % 256);
 
                     if (result > 255) {
                         chip8.regs[15] = 1;
@@ -634,9 +749,9 @@ void cycle(cpu& chip8) {
                     }
                     break;
                 case 5:
-                    chip8.regs[vX] -= chip8.regs[vY];
+                    chip8.regs[X] -= chip8.regs[Y];
 
-                    if (temp >= chip8.regs[vY]) {
+                    if (temp >= chip8.regs[Y]) {
                         chip8.regs[15] = 1;
                     } else {
                         chip8.regs[15] = 0;
@@ -645,14 +760,14 @@ void cycle(cpu& chip8) {
                     break;
                 case 6:
                     
-                    chip8.regs[vX] >>= 1;
+                    chip8.regs[X] >>= 1;
                     chip8.regs[15] = temp & 0b00000001;
 
                     break;
                 case 7:
 
-                    chip8.regs[vX] = chip8.regs[vY] - chip8.regs[vX];
-                    if (chip8.regs[vY] >= temp) {
+                    chip8.regs[X] = chip8.regs[Y] - chip8.regs[X];
+                    if (chip8.regs[Y] >= temp) {
                         chip8.regs[15] = 1;
                     } else {
                         chip8.regs[15] = 0;
@@ -661,7 +776,7 @@ void cycle(cpu& chip8) {
                     break;
                 case 0xE:
 
-                    chip8.regs[vX] <<= 1;
+                    chip8.regs[X] <<= 1;
                     chip8.regs[15] = temp >> 7;
 
                     break;
@@ -670,7 +785,7 @@ void cycle(cpu& chip8) {
             break;
         case 9: //9XY0
                 
-            if (chip8.regs[vX] != chip8.regs[vY]) {
+            if (chip8.regs[X] != chip8.regs[Y]) {
                 chip8.PC += 2;
             }
 
@@ -680,14 +795,14 @@ void cycle(cpu& chip8) {
             chip8.I = NNN;
                   
             break;
-        case 0xB: //BXNN
+        case 0xB: //BNNN
                   
-            chip8.PC = NNN + chip8.regs[vX];
+            chip8.PC = NNN + chip8.regs[0];
 
             break;
         case 0xC: //CXNN
                   
-            chip8.regs[vX] = random & NN;
+            chip8.regs[X] = random & NN;
 
             break;
         case 0xD: //DXYN
@@ -718,11 +833,28 @@ void cycle(cpu& chip8) {
                                 
                                 if (scrX >= 0 && scrX < 64 && scrY >= 0 && scrY < 32) { // if out of bounds, AFTER WRAPPING, don't draw
 
-                                    if (chip8.lowScreen[scrY][scrX]) {
-                                        chip8.regs[15] = 1; //collision detected
-                                    }
+                                    if(chip8.selectedPlane == 1) {
+                                        if (chip8.lowPlane1[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
 
-                                    chip8.lowScreen[scrY][scrX] ^= true;
+                                        chip8.lowPlane1[scrY][scrX] ^= true;
+                                    } 
+                                    else if (chip8.selectedPlane == 2) {
+                                        if (chip8.lowPlane2[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
+
+                                        chip8.lowPlane2[scrY][scrX] ^= true;
+                                    } 
+                                    else if (chip8.selectedPlane == 3) {
+                                        if (chip8.lowPlane2[scrY][scrX] || chip8.lowPlane1[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
+
+                                        chip8.lowPlane2[scrY][scrX] ^= true;
+                                        chip8.lowPlane1[scrY][scrX] ^= true;
+                                    }
                                 }   
                             } else {
                                 int startX = x % 128; 
@@ -732,11 +864,28 @@ void cycle(cpu& chip8) {
                                 
                                 if (scrX >= 0 && scrX < 128 && scrY >= 0 && scrY < 64) { // if out of bounds, AFTER WRAPPING, don't draw
 
-                                    if (chip8.hiScreen[scrY][scrX]) {
-                                        chip8.regs[15] = 1; //collision detected
-                                    }
+                                    if(chip8.selectedPlane == 1) {
+                                        if (chip8.hiPlane1[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
 
-                                    chip8.hiScreen[scrY][scrX] ^= true;
+                                        chip8.hiPlane1[scrY][scrX] ^= true;
+                                    } 
+                                    else if (chip8.selectedPlane == 2) {
+                                        if (chip8.hiPlane2[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
+
+                                        chip8.hiPlane2[scrY][scrX] ^= true;
+                                    } 
+                                    else if (chip8.selectedPlane == 3) {
+                                        if (chip8.hiPlane2[scrY][scrX] || chip8.lowPlane1[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
+
+                                        chip8.hiPlane2[scrY][scrX] ^= true;
+                                        chip8.hiPlane1[scrY][scrX] ^= true;
+                                    }
                                 }  
 
                             }
@@ -767,11 +916,28 @@ void cycle(cpu& chip8) {
 
                             if (scrX >= 0 && scrX < 128 && scrY >= 0 && scrY < 64) { // if out of bounds, AFTER WRAPPING, don't draw
 
-                                if (chip8.hiScreen[scrY][scrX]) {
-                                    chip8.regs[15] = 1; //collision detected
-                                }
+                               if(chip8.selectedPlane == 1) {
+                                        if (chip8.hiPlane1[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
 
-                                chip8.hiScreen[scrY][scrX] ^= true;
+                                        chip8.hiPlane1[scrY][scrX] ^= true;
+                                    } 
+                                    else if (chip8.selectedPlane == 2) {
+                                        if (chip8.hiPlane2[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
+
+                                        chip8.hiPlane2[scrY][scrX] ^= true;
+                                    } 
+                                    else if (chip8.selectedPlane == 3) {
+                                        if (chip8.hiPlane2[scrY][scrX] || chip8.lowPlane1[scrY][scrX]) {
+                                            chip8.regs[15] = 1; //collision detected
+                                        }
+
+                                        chip8.hiPlane2[scrY][scrX] ^= true;
+                                        chip8.hiPlane1[scrY][scrX] ^= true;
+                                    }
                             }   
                         }
                     }
@@ -786,23 +952,33 @@ void cycle(cpu& chip8) {
 
             if (NN == 0x9E) {
                 if (keyIndex < 16 && chip8.keys[keyIndex]) {
-                    chip8.PC += 2; //skip next opcode if key == regs[vX]
+                    chip8.PC += 2; //skip next opcode if key == regs[X]
                 }
             } else if (NN == 0xA1) {
                 if (keyIndex < 16 && !chip8.keys[keyIndex]) {
-                    chip8.PC += 2; //skip next opcode if key != regs[vX]
+                    chip8.PC += 2; //skip next opcode if key != regs[X]
                 }
             }
                   
 
             break;
-        case 0xF: //FX07, FX0A, FX15, FX18, FX1E, FX29, FX30, FX33, FX55, FX65
+        case 0xF: //FX01, FX07, FX0A, FX15, FX18, FX1E, FX29, FX30, FX33, FX55, FX65
                   
             switch(NN) {
-
+                case 0x01:
+                    
+                    if (X == 1) {
+                        chip8.selectedPlane = 1;
+                    } else if (X == 2) {
+                        chip8.selectedPlane = 2;
+                    } else if (X == 3) {
+                        chip8.selectedPlane = 3;
+                    }
+                    
+                    break;
                 case 0x07:
 
-                    chip8.regs[vX] = chip8.delay;
+                    chip8.regs[X] = chip8.delay;
 
                     break;
 
@@ -812,7 +988,7 @@ void cycle(cpu& chip8) {
 
                     for (int i = 0; i < 16; ++i) {
                         if (chip8.keys[i]) {
-                            chip8.regs[vX] = i;
+                            chip8.regs[X] = i;
                             chip8.PC += 2; 
                             break;
                         }
@@ -821,43 +997,43 @@ void cycle(cpu& chip8) {
                     
                 case 0x15:
 
-                    chip8.delay = chip8.regs[vX];
+                    chip8.delay = chip8.regs[X];
 
                     break;
 
                 case 0x18:
 
-                    chip8.sound = chip8.regs[vX];
+                    chip8.sound = chip8.regs[X];
 
                     break;
 
                 case 0x1E:
 
-                    chip8.I += chip8.regs[vX];
+                    chip8.I += chip8.regs[X];
 
                     break;
 
                 case 0x29: //get 5 high font data
 
-                    chip8.I = (uint16_t)chip8.regs[vX] * 5;
+                    chip8.I = (uint16_t)chip8.regs[X] * 5;
 
                     break;
                 case 0x30: //get 10 high font data
 
-                    chip8.I = 0x50 + (uint16_t)chip8.regs[vX] * 10;
+                    chip8.I = 0x50 + (uint16_t)chip8.regs[X] * 10;
 
                     break;
                 case 0x33:
 
-                    chip8.mem[chip8.I] = chip8.regs[vX] / 100;
-                    chip8.mem[chip8.I + 1] = (chip8.regs[vX] / 10) % 10;
-                    chip8.mem[chip8.I + 2] = chip8.regs[vX] % 10;
+                    chip8.mem[chip8.I] = chip8.regs[X] / 100;
+                    chip8.mem[chip8.I + 1] = (chip8.regs[X] / 10) % 10;
+                    chip8.mem[chip8.I + 2] = chip8.regs[X] % 10;
 
                     break;
 
                 case 0x55: //save
 
-                    for (int i = 0; i <= vX; ++i) {
+                    for (int i = 0; i <= X; ++i) {
                         chip8.mem[chip8.I + i] = chip8.regs[i];
                     }
 
@@ -865,7 +1041,7 @@ void cycle(cpu& chip8) {
 
                 case 0x65: //load
 
-                    for (int i = 0; i <= vX; ++i) {
+                    for (int i = 0; i <= X; ++i) {
                         chip8.regs[i] = chip8.mem[chip8.I + i];
                     }
 
@@ -879,12 +1055,24 @@ void cls(cpu& chip8) {
 
     for (int i = 0; i < lowHeight; i++) { //clear low screen
         for (int j = 0; j < lowWidth; j++) {
-            chip8.lowScreen[i][j] = false;
+            chip8.lowPlane1[i][j] = false;
+            chip8.lowPlane2[i][j] = false;
         }
     }
     for (int i = 0; i < hiHeight; i++) { //clear high screen
         for (int j = 0; j < hiWidth; j++) {
-            chip8.hiScreen[i][j]  = false;
+            chip8.hiPlane1[i][j]  = false;
+            chip8.hiPlane2[i][j]  = false;
         }
+    }
+}
+
+void checkF000(cpu& chip8) {
+    uint16_t next_opcode = (chip8.mem[chip8.PC + 2] << 8) | chip8.mem[chip8.PC + 3];
+    if (next_opcode == 0xF000) {
+        chip8.PC += 4;
+    }
+    else {
+        chip8.PC += 2;
     }
 }
