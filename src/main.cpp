@@ -298,6 +298,9 @@ int main( int argc, char *argv[] ) {
         if (IsKeyPressed(KEY_LEFT_SHIFT)) {
             chip8.debugOverlay = false;
         }
+        if (IsKeyPressed(KEY_SPACE)) {
+            instructionsPerFrame = 1000;
+        }
 
         if (chip8.delay > 0) {
         chip8.delay--;
