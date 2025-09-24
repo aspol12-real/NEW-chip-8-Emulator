@@ -18,26 +18,26 @@ const int lowHeight = 32;
 
 const int hiWidth = 128;
 const int hiHeight = 64;
+const int screenWidth = 1024;
+const int screenHeight = screenWidth/2;
+const int bigCell = 8;
 
-const int screenSpaceX  = 512;
-const int screenSpaceY = screenSpaceX/2;
+int screenMarginSides = 300;
+int screenMarginBottom = 300;
 
-const int screenMarginSides = 300;
-const int screenMarginBottom = 300;
+int screenSpaceX  = screenWidth - (screenMarginSides * 2);
+int screenSpaceY = screenSpaceX/2;
 
-const int screenWidth = screenSpaceX + screenMarginSides * 2;
-const int screenHeight = screenSpaceY + screenMarginBottom;
+int hicellsizeX = screenSpaceX / hiWidth;
+int hicellsizeY = screenSpaceY / hiHeight;
 
-const int hicellsizeX = screenSpaceX / hiWidth;
-const int hicellsizeY = screenSpaceY / hiHeight;
-
-const int locellsizeX = screenSpaceX / lowWidth;
-const int locellsizeY = screenSpaceY / lowHeight;
-
+int locellsizeX = screenSpaceX / lowWidth;
+int locellsizeY = screenSpaceY / lowHeight;
 
 int instructionsPerFrame = 11;
 
 int spriteHeight;
+
 
 class cpu {
     public:
@@ -231,6 +231,27 @@ int main( int argc, char *argv[] ) {
 
     while (!WindowShouldClose()) {  //main runtime
 
+        if (!chip8.debugOverlay) {
+            screenMarginSides = 0;
+            screenMarginBottom = 0;
+            screenSpaceX = screenWidth;
+            screenSpaceY = screenHeight;
+            locellsizeX = screenWidth / lowWidth;
+            locellsizeY = screenHeight / lowHeight;
+            hicellsizeX = screenWidth / hiWidth;
+            hicellsizeY = screenHeight / hiHeight;
+
+        } else {
+            screenMarginSides = 300;
+            screenMarginBottom = 300;
+            screenSpaceX  = screenWidth - (screenMarginSides * 2);
+            screenSpaceY = screenSpaceX/2;
+            locellsizeX = screenSpaceX / lowWidth;
+            locellsizeY = screenSpaceY / lowHeight;
+            hicellsizeX = screenSpaceX / hiWidth;
+            hicellsizeY = screenSpaceY / hiHeight;
+        }
+
 
         //handle inputs
         chip8.keys[0x1] = IsKeyDown(KEY_ONE);
@@ -299,9 +320,6 @@ int main( int argc, char *argv[] ) {
 
         ClearBackground(BLACK);
 
-        //draw screen border
-
-        DrawRectangleLines(screenMarginSides, 0, screenSpaceX + 1, screenSpaceY + 1, WHITE);
 
         if (!chip8.hires) { //LOW RES MODE
 
