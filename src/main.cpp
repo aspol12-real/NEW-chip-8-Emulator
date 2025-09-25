@@ -22,6 +22,7 @@ const int screenWidth = 1024;
 const int screenHeight = screenWidth/2;
 const int bigCell = 8;
 
+const int MEM_SIZE = 65535;
 int screenMarginSides = 300;
 int screenMarginBottom = 300;
 
@@ -39,11 +40,14 @@ int instructionsPerFrame = 11;
 int spriteHeight;
 
 
+
 class cpu {
     public:
 
-        //memory
-        uint8_t mem[65535] = {
+            //memory
+        uint8_t audioBuffer[16];
+        uint16_t stack[16];
+        uint8_t mem[MEM_SIZE] = {
         
             // regular characters 0-F
 
@@ -86,17 +90,19 @@ class cpu {
 
         };
 
+            //bitplanes
+
+        //lores
         bool lowPlane1[lowHeight][lowWidth];
         bool lowPlane2[lowHeight][lowWidth];
 
+        //hires
         bool hiPlane1[hiHeight][hiWidth];
         bool hiPlane2[hiHeight][hiWidth];
 
-
-        uint16_t stack[16];
-
-        //regs
+            //regs
         uint8_t regs[16];
+        uint8_t flagsStorage[16];
         uint16_t PC = 0x200;
         uint16_t I = 0;
         uint8_t delay = 0; //60 Hz
@@ -104,19 +110,20 @@ class cpu {
         bool keys[16] = {false};
         uint8_t SP = 0; //stack pointer
 
-        //system flags
+            //system flags
         bool vblank = false;
         bool hires = false;
         bool bitplane1 = true;
         bool bitplane2 = false; 
-
+        bool clearFlag = false;
+            //plane selection
         int selectedPlane = 3;
 
-        //debug flags
+            //debug flags
         bool debugOverlay = false;
         bool paused = false;
 
-        //attributes
+            //attributes
         int audioPitch = 1000; //1000hz by default
 
 };
@@ -141,9 +148,16 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
     (void)pInput; 
     }
 
+
+
 void cycle(cpu& chip8);
 void cls(cpu& chip8);
-void checkF000(cpu& chip8);
+void scrollDown(cpu& chip8, uint8_t N);
+void scrollUp(cpu& chip8, uint8_t N);
+void scrollLeft(cpu& chip8);
+void scrollRight(cpu& chip8);
+int pow(int a, int b);
+
 
 int main( int argc, char *argv[] ) {
     cpu chip8; //init cpu object
@@ -151,11 +165,13 @@ int main( int argc, char *argv[] ) {
     for (int i = 0; i < lowHeight; i++) {
         for (int j = 0; j < lowWidth; j++) {
             chip8.lowPlane1[i][j] = false;
+            chip8.lowPlane2[i][j] = false;
         }
     } //init screen buffer
     for (int i = 0; i < hiHeight; i++) {
         for (int j = 0; j < hiWidth; j++) {
             chip8.hiPlane1[i][j]  = false;
+            chip8.hiPlane2[i][j]  = false;
         }
     }
 
@@ -167,6 +183,7 @@ int main( int argc, char *argv[] ) {
     
     for (int i = 0; i < 16; i++) {
         chip8.stack[i] = 0; //initialize stack to be empty
+        chip8.regs[i]  = 0; //init regs to be empty
     }
 
     InitWindow(screenWidth, screenHeight, "XO-CHIP");
@@ -181,7 +198,7 @@ int main( int argc, char *argv[] ) {
 
     char byte;
     int index = 0;
-    while (file.get(byte) && index < 4096 - 512) {
+    while (file.get(byte) && index < MEM_SIZE - 512) {
         unsigned char ubyte = static_cast<unsigned char>(byte);
         chip8.mem[index + 512] = ubyte;
         index++;
@@ -222,7 +239,7 @@ int main( int argc, char *argv[] ) {
 
     Color richblack = {3, 25, 38, 255};
     Color teal      = {70, 129, 137, 255};
-    Color cambridge = {119, 172, 162, 255};
+    Color cambridge = {119, 172, 62, 255};
     Color ash       = {157, 190, 187, 255};
     Color parchment = {244, 233, 205, 255};
 
@@ -270,6 +287,7 @@ int main( int argc, char *argv[] ) {
         chip8.keys[0x0] = IsKeyDown(KEY_X);
         chip8.keys[0xB] = IsKeyDown(KEY_C);
         chip8.keys[0xF] = IsKeyDown(KEY_V);
+
         if (IsKeyPressed(KEY_FIVE)) {
             chip8.paused = true;
         }
@@ -281,15 +299,20 @@ int main( int argc, char *argv[] ) {
         }
 
         if (IsKeyPressed(KEY_EIGHT)) { //reset
+            chip8.clearFlag = false;
             cls(chip8);
+
+            chip8.PC = 512;
+            chip8.I = 0;
+
             for (int i = 0; i < 16; i++) {
                 chip8.stack[i] = 0;
+                chip8.regs[i]  = 0;
             }
             chip8.SP = 0;
             for (int i = 0; i < 16; i++) {
-                chip8.regs[i] = 0;
+                chip8.flagsStorage[i] = 0;
             }
-            chip8.PC = 512;
             chip8.I = 0;
         }
         if (IsKeyPressed(KEY_TAB)) {
@@ -298,8 +321,10 @@ int main( int argc, char *argv[] ) {
         if (IsKeyPressed(KEY_LEFT_SHIFT)) {
             chip8.debugOverlay = false;
         }
-        if (IsKeyPressed(KEY_SPACE)) {
+        if (IsKeyDown(KEY_SPACE)) {
             instructionsPerFrame = 1000;
+        } else {
+            instructionsPerFrame = 11;
         }
 
         if (chip8.delay > 0) {
@@ -378,25 +403,18 @@ int main( int argc, char *argv[] ) {
         if(chip8.debugOverlay) {
             DrawText("DEBUG", 0, 0, 20, RED);
             DrawText(TextFormat("CURRENT INSTRUCTION: %04X", (chip8.mem[chip8.PC] << 8) | chip8.mem[chip8.PC + 1]), 100, screenSpaceY + 50, 20, RED);
-            DrawText(TextFormat("V0 = %d", chip8.regs[0]), 0, 50, 20, RED);
-            DrawText(TextFormat("V1 = %d", chip8.regs[1]), 0, 70, 20, RED);
-            DrawText(TextFormat("V2 = %d", chip8.regs[2]), 0, 90, 20, RED);
-            DrawText(TextFormat("V3 = %d", chip8.regs[3]), 0, 110, 20, RED);
-            DrawText(TextFormat("V4 = %d", chip8.regs[4]), 0, 130, 20, RED);
-            DrawText(TextFormat("V5 = %d", chip8.regs[5]), 0, 150, 20, RED);
-            DrawText(TextFormat("V6 = %d", chip8.regs[6]), 0, 170, 20, RED);
-            DrawText(TextFormat("V7 = %d", chip8.regs[7]), 0, 190, 20, RED);
-            DrawText(TextFormat("V8 = %d", chip8.regs[8]), 0, 210, 20, RED);
-            DrawText(TextFormat("V9 = %d", chip8.regs[9]), 0, 230, 20, RED);
-            DrawText(TextFormat("VA = %d", chip8.regs[10]), 0, 250, 20, RED);
-            DrawText(TextFormat("VB = %d", chip8.regs[11]), 0, 270, 20, RED);
-            DrawText(TextFormat("VC = %d", chip8.regs[12]), 0, 290, 20, RED);
-            DrawText(TextFormat("VD = %d", chip8.regs[13]), 0, 310, 20, RED);
-            DrawText(TextFormat("VE = %d", chip8.regs[14]), 0, 330, 20, RED);
-            DrawText(TextFormat("VF = %d", chip8.regs[15]), 0, 350, 20, RED);
+            int yOff = 0;
+            for (int i = 0; i < 16; i++) {
+                DrawText(TextFormat("V%01x = %d", i,  chip8.regs[i]), 0, 50 + yOff, 20, RED);
+                yOff += 20;
+            }
             DrawText(TextFormat("I = %d", chip8.I), (screenWidth - 100), 0, 20, RED);
+            DrawText(TextFormat("PC = %d", chip8.PC), 100, screenSpaceY - 10, 20, RED);
+            DrawText(TextFormat("PITCH = %d", chip8.audioPitch), 100, screenSpaceY - 40, 20, RED);
             DrawText(TextFormat("BITPLANE = %d", chip8.selectedPlane), (screenWidth - 200), 60, 20, RED);
+            DrawText(TextFormat("IPF = %d", instructionsPerFrame), (screenWidth - 200), 30, 20, RED);
             DrawText(TextFormat("STACK = [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d]", chip8.stack[0], chip8.stack[1], chip8.stack[2], chip8.stack[3], chip8.stack[4], chip8.stack[5], chip8.stack[6], chip8.stack[7], chip8.stack[8], chip8.stack[9], chip8.stack[10], chip8.stack[12], chip8.stack[13], chip8.stack[14], chip8.stack[15]), 100, screenSpaceY + 20, 20, RED);
+            DrawText(TextFormat("AUDIO = [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d]", chip8.audioBuffer[0], chip8.audioBuffer[1], chip8.audioBuffer[2], chip8.audioBuffer[3], chip8.audioBuffer[4], chip8.audioBuffer[5], chip8.audioBuffer[6], chip8.audioBuffer[7], chip8.audioBuffer[8], chip8.audioBuffer[9], chip8.audioBuffer[10], chip8.audioBuffer[12], chip8.audioBuffer[13], chip8.audioBuffer[14], chip8.audioBuffer[15]), 100, screenSpaceY + 270, 20, RED);
             DrawText(TextFormat("DELAY = %d", chip8.delay), 0, 390, 20, RED);
             DrawText(TextFormat("SOUND = %d", chip8.sound), 0, 410, 20, RED);
             DrawText(TextFormat("SP = %d", chip8.SP), 0, 430, 20, RED);
@@ -409,6 +427,7 @@ int main( int argc, char *argv[] ) {
             } else {
                 spriteHeight = (chip8.mem[chip8.PC + 1] & 0x0F);
             }
+
 
             int yOffset = screenSpaceY + 100;
             for (int i = 0; i < spriteHeight; i++) {
@@ -480,8 +499,6 @@ int main( int argc, char *argv[] ) {
                 }
                 yOffset5 += 1;
             }
-
-        
         } 
 
         if (chip8.paused) {
@@ -499,13 +516,14 @@ int main( int argc, char *argv[] ) {
 
 void cycle(cpu& chip8) {
     
+
     
     // fetch
     uint16_t opcode = (chip8.mem[chip8.PC] << 8) | chip8.mem[chip8.PC + 1];
 
     uint8_t inst =   opcode >> 12;
-    uint8_t X   =  (opcode & 0x0F00) >> 8;
-    uint8_t Y   =  (opcode & 0x00F0) >> 4;
+    uint8_t X    =  (opcode & 0x0F00) >> 8;
+    uint8_t Y    =  (opcode & 0x00F0) >> 4;
     uint8_t N    =   opcode & 0x000F;
     uint8_t NN   =   opcode & 0x00FF;
     uint16_t NNN =   opcode & 0x0FFF;
@@ -523,139 +541,37 @@ void cycle(cpu& chip8) {
     // increment
     chip8.PC += 2;
 
+
+
     //decode & execute
     switch(inst) {
         case 0: //00CN, 00E0, 00EE, 00FB, 00FC, 00FD, 00FC, 00FF
 
             if ((opcode & 0x00F0) == 0xC0) { //00CN scroll down N lines
 
-                if (!chip8.hires) {
-                    for (int i = lowHeight - 1; i >= N; i--) {
-                        for (int j = 0; j < (lowWidth - 1); j++) {
-                            chip8.lowPlane1[i][j] = chip8.lowPlane1[i - N][j];
-                        } 
-                    }
+                scrollDown(chip8, N);
+                
 
-                    for (int i = 0; i < N; i++) {
-                        for (int j = 0; j < lowWidth; j++) {
-                            chip8.lowPlane1[i][j] = false;
-                        } 
-                    }
-                } else {
-                    for (int i = hiHeight - 1; i >= N; i--) {
-                        for (int j = 0; j < (hiWidth - 1); j++) {
-                            chip8.hiPlane1[i][j] = chip8.hiPlane1[i - N][j];
-                        }
-                    }
-
-                    for (int i = 0; i < N; i++) {
-                        for (int j = 0; j < hiWidth; j++) {
-                            chip8.hiPlane1[i][j] = false;
-                        }
-                    }
-                }
             }
             if ((opcode & 0x00F0) == 0xD0) { //00DN scroll hires bitplane up N pixels
 
-                if (chip8.hires) {
+                scrollUp(chip8, N);
 
-                    if(chip8.bitplane1) {
-                        for (int i = 0; i <= N; i++) {
-                            for (int j = 0; j < (hiWidth - 1); j++) {
-                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i + N][j];
-                            } 
-                        }
-
-                        for (int i = 0; i < N; i++) {
-                            for (int j = 0; j < lowWidth; j++) {
-                                chip8.hiPlane1[i][j] = false;
-                            } 
-                        }
-                    } else {
-                        for (int i = 0; i <= N; i++) {
-                            for (int j = 0; j < (hiWidth - 1); j++) {
-                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i + N][j];
-                            } 
-                        }
-
-                        for (int i = 0; i < N; i++) {
-                            for (int j = 0; j < lowWidth; j++) {
-                                chip8.hiPlane1[i][j] = false;
-                            } 
-                        }
-                    }
-                } 
             }
             switch(NN) {
 
                 case 0xFB: //scroll right four pixels
 
-                
-                    if (!chip8.hires) {
-                            for (int i = 0; i < lowHeight; i++) {
-                                for (int j = lowWidth - 1; j >= 4; j--) {
-                                    chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j + 4];  
-                                }
-                            }
-
-                            //clean 4 rightmost columns
-                            for (int i = 0; i < lowHeight; i++) {
-                                for (int j = lowWidth - 4; j < lowWidth; j++) {
-                                    chip8.lowPlane1[i][j] = false;
-                                }
-                            }
-
-                        } else {
-                            for (int i = 0; i < hiHeight; i++) {
-                                for (int j = hiWidth - 1; j >= 4; j--) {
-                                    chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j + 4];  
-                                }
-                            }
-
-                            //clean 4 rightmost columns
-                            for (int i = 0; i < hiHeight; i++) {
-                                for (int j = hiWidth - 4; j < hiWidth; j++) {
-                                    chip8.hiPlane1[i][j] = false;
-                                }
-                            }
-
-                        }
+                    scrollRight(chip8);
                     break;
 
                 case 0xFC: //scroll left four pixels
-                    if (!chip8.hires) {
-                        for (int i = 0; i < lowHeight; i++) {
-                            for (int j = 0 ; j < lowWidth - 4; j++) {
-                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j - 4];  
-                            }
-                        }
 
-                        //clean 4 leftmost columns
-                        for (int i = 0; i < lowHeight; i++) {
-                            for (int j = 0; j < 3; j++) {
-                                chip8.lowPlane1[i][j] = false;
-                            }
-                        }
-
-                    } else {
-                        for (int i = 0; i < hiHeight; i++) {
-                            for (int j = 0; j < hiWidth - 4; j++) {
-                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j - 4];  
-                            }
-                        }
-
-                        //clean 4 leftmost columns
-                        for (int i = 0; i < hiHeight; i++) {
-                            for (int j = 0; j < 3; j++) {
-                                chip8.hiPlane1[i][j] = false;
-                            }
-                        }
-
-                    }
-
+                    scrollLeft(chip8);
                     break;
 
                 case 0xE0:
+
                     cls(chip8);
                     break;
 
@@ -722,6 +638,16 @@ void cycle(cpu& chip8) {
                 chip8.PC += 2;
             }
 
+            if (N == 2) { //write regs vx-vy to memory pointed by I
+                for (int i = X; i < Y; i++) {
+                    chip8.mem[chip8.I] = chip8.regs[i];
+                }
+            } else if (N == 3) { //load to regs vx-vy from memory pointed by I
+                for (int i = X; i < Y; i++) {
+                    chip8.regs[i] = chip8.mem[chip8.I];
+                }
+            } 
+            
             break;
         case 6: //6XNN
                 
@@ -781,6 +707,7 @@ void cycle(cpu& chip8) {
                     break;
                 case 6:
                     
+                    chip8.regs[X] = chip8.regs[Y];
                     chip8.regs[X] >>= 1;
                     chip8.regs[15] = temp & 0b00000001;
 
@@ -797,6 +724,7 @@ void cycle(cpu& chip8) {
                     break;
                 case 0xE:
 
+                    chip8.regs[X] = chip8.regs[Y];
                     chip8.regs[X] <<= 1;
                     chip8.regs[15] = temp >> 7;
 
@@ -829,7 +757,7 @@ void cycle(cpu& chip8) {
         case 0xD: //DXYN
             {
 
-        
+            chip8.clearFlag = true;
 
             if (N != 0) { // lores
                 chip8.regs[15] = 0;
@@ -986,6 +914,11 @@ void cycle(cpu& chip8) {
         case 0xF: //FX01, FX07, FX0A, FX15, FX18, FX1E, FX29, FX30, FX33, FX55, FX65
                   
             switch(NN) {
+                case 0x00: //set I to next 16bit word
+
+                    chip8.I = (chip8.mem[chip8.PC] << 8) | chip8.mem[chip8.PC + 1];
+                    chip8.PC += 2;
+
                 case 0x01:
                     
                     if (X == 1) {
@@ -996,6 +929,13 @@ void cycle(cpu& chip8) {
                         chip8.selectedPlane = 3;
                     }
                     
+                    break;
+                case 0x02:
+
+                    for (int i = 0; i < 16; i++) {
+                        chip8.audioBuffer[i] = chip8.mem[chip8.I + i];
+                    }
+
                     break;
                 case 0x07:
 
@@ -1051,13 +991,20 @@ void cycle(cpu& chip8) {
                     chip8.mem[chip8.I + 2] = chip8.regs[X] % 10;
 
                     break;
+                case 0x3A:
+                    {
 
+                    std::cout << "AUDIO PITCH CHANGE!!!";
+
+                }
+                    break;
                 case 0x55: //save
 
                     for (int i = 0; i <= X; ++i) {
                         chip8.mem[chip8.I + i] = chip8.regs[i];
                     }
 
+                    chip8.I += X + 1;
                     break;
 
                 case 0x65: //load
@@ -1065,35 +1012,437 @@ void cycle(cpu& chip8) {
                     for (int i = 0; i <= X; ++i) {
                         chip8.regs[i] = chip8.mem[chip8.I + i];
                     }
+                    chip8.I += X + 1;
 
+                    break;
+                case 0x75: //saveflags
+                    for (int i = 0; i < 16; i++) {
+                        chip8.flagsStorage[i] = chip8.regs[i];
+                    }
+                    break;
+                case 0x85: //loadflags
+                    for (int i = 0; i < 16; i++) {
+                        chip8.regs[i] = chip8.flagsStorage[i];
+                    }
                     break;
             }
             break;
         }
     }
 
+
+
+
+
+
+
 void cls(cpu& chip8) {
 
-    for (int i = 0; i < lowHeight; i++) { //clear low screen
-        for (int j = 0; j < lowWidth; j++) {
-            chip8.lowPlane1[i][j] = false;
-            chip8.lowPlane2[i][j] = false;
+    if (!chip8.clearFlag) {
+        for (int i = 0; i < lowHeight; i++) { //clear low screen
+            for (int j = 0; j < lowWidth; j++) {
+                chip8.lowPlane1[i][j] = false;
+                chip8.lowPlane2[i][j] = false;
+            }
         }
-    }
-    for (int i = 0; i < hiHeight; i++) { //clear high screen
-        for (int j = 0; j < hiWidth; j++) {
-            chip8.hiPlane1[i][j]  = false;
-            chip8.hiPlane2[i][j]  = false;
+        for (int i = 0; i < hiHeight; i++) { //clear high screen
+            for (int j = 0; j < hiWidth; j++) {
+                chip8.hiPlane1[i][j]  = false;
+                chip8.hiPlane2[i][j]  = false;
+            }
+        }
+    } else {
+        if (chip8.selectedPlane == 1) {
+            for (int i = 0; i < lowHeight; i++) { //clear low screen
+                for (int j = 0; j < lowWidth; j++) {
+                    chip8.lowPlane1[i][j] = false;
+                }
+            }
+            for (int i = 0; i < hiHeight; i++) { //clear high screen
+                for (int j = 0; j < hiWidth; j++) {
+                    chip8.hiPlane1[i][j]  = false;
+                }
+            }
+        } else if (chip8.selectedPlane == 2) {
+            for (int i = 0; i < lowHeight; i++) { //clear low screen
+                for (int j = 0; j < lowWidth; j++) {
+                    chip8.lowPlane2[i][j] = false;
+                }
+            }
+            for (int i = 0; i < hiHeight; i++) { //clear high screen
+                for (int j = 0; j < hiWidth; j++) {
+                    chip8.hiPlane2[i][j]  = false;
+                }
+            }
+        } else if (chip8.selectedPlane == 3) {
+            for (int i = 0; i < lowHeight; i++) { //clear low screen
+                for (int j = 0; j < lowWidth; j++) {
+                    chip8.lowPlane1[i][j] = false;
+                    chip8.lowPlane2[i][j] = false;
+                }
+            }
+            for (int i = 0; i < hiHeight; i++) { //clear high screen
+                for (int j = 0; j < hiWidth; j++) {
+                    chip8.hiPlane1[i][j]  = false;
+                    chip8.hiPlane2[i][j]  = false;
+                }
+            }
         }
     }
 }
 
-void checkF000(cpu& chip8) {
-    uint16_t next_opcode = (chip8.mem[chip8.PC + 2] << 8) | chip8.mem[chip8.PC + 3];
-    if (next_opcode == 0xF000) {
-        chip8.PC += 4;
-    }
-    else {
-        chip8.PC += 2;
-    }
+
+
+
+
+//horrifying scroll code below!
+
+void scrollUp(cpu& chip8, uint8_t N) {
+                if (!chip8.hires) {
+                    if(chip8.selectedPlane == 1) {
+                        for (int i = 0; i < (lowHeight - N); i++) {
+                            for (int j = 0; j < lowWidth - 1; j++) {
+                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i + N][j];
+                            } 
+                        }
+
+                        for (int i = (lowHeight - N); i < lowHeight; i++) {
+                            for (int j = 0; j < lowWidth - 1; j++) {
+                                chip8.lowPlane1[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 2) {
+                        for (int i = 0; i < (lowHeight - N); i++) {
+                            for (int j = 0; j < lowWidth - 1; j++) {
+                                chip8.lowPlane2[i][j] = chip8.lowPlane2[i + N][j];
+                            } 
+                        }
+                        for (int i = (lowHeight - N); i < lowHeight; i++) {
+                            for (int j = 0; j < lowWidth - 1; j++) {
+                                chip8.lowPlane2[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 3) {
+                        for (int i = 0; i < (lowHeight - N); i++) {
+                            for (int j = 0; j < lowWidth - 1; j++) {
+                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i + N][j];
+                                chip8.lowPlane2[i][j] = chip8.lowPlane2[i + N][j];
+                            } 
+                        }
+                        for (int i = (lowHeight - N); i < lowHeight; i++) {
+                            for (int j = 0; j < lowWidth - 1; j++) {
+                                chip8.lowPlane1[i][j] = false;
+                                chip8.lowPlane2[i][j] = false;
+                            } 
+                        }
+                    } 
+                } else {
+                    if(chip8.selectedPlane == 1) {
+                        for (int i = 0; i < (hiHeight - N); i++) {
+                            for (int j = 0; j < hiWidth - 1; j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i + N][j];
+                            } 
+                        }
+
+                        for (int i = (hiHeight - N); i < hiHeight; i++) {
+                            for (int j = 0; j < hiWidth - 1; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 2) {
+                        for (int i = 0; i < (hiHeight - N); i++) {
+                            for (int j = 0; j < hiWidth - 1; j++) {
+                                chip8.hiPlane2[i][j] = chip8.hiPlane2[i + N][j];
+                            } 
+                        }
+                        for (int i = (hiHeight - N); i < hiHeight; i++) {
+                            for (int j = 0; j < hiWidth - 1; j++) {
+                                chip8.hiPlane2[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 3) {
+                        for (int i = 0; i < (hiHeight - N); i++) {
+                            for (int j = 0; j < hiWidth - 1; j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i + N][j];
+                                chip8.hiPlane2[i][j] = chip8.hiPlane2[i + N][j];
+                            } 
+                        }
+                        for (int i = (hiHeight - N); i < hiHeight; i++) {
+                            for (int j = 0; j < hiWidth - 1; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                                chip8.hiPlane2[i][j] = false;
+                            } 
+                        }
+                    } 
+                }
+}
+void scrollDown(cpu& chip8, uint8_t N) {
+                if (!chip8.hires) {
+                    if (chip8.selectedPlane == 1 ) {
+                        for (int i = lowHeight - 1; i >= N; i--) {
+                            for (int j = 0; j < (lowWidth - 1); j++) {
+                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i - N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < lowWidth; j++) {
+                                chip8.lowPlane1[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 2) {
+                        for (int i = lowHeight - 1; i >= N; i--) {
+                            for (int j = 0; j < (lowWidth - 1); j++) {
+                                chip8.lowPlane2[i][j] = chip8.lowPlane2[i - N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < lowWidth; j++) {
+                                chip8.lowPlane2[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 3) {
+                        for (int i = lowHeight - 1; i >= N; i--) {
+                            for (int j = 0; j < (lowWidth - 1); j++) {
+                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i - N][j];
+                                chip8.lowPlane2[i][j] = chip8.lowPlane2[i - N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < lowWidth; j++) {
+                                chip8.lowPlane1[i][j] = false;
+                                chip8.lowPlane2[i][j] = false;
+                            } 
+                        }
+                    }
+                } else {
+                    if (chip8.selectedPlane == 1 ) {
+                        for (int i = hiHeight - 1; i >= N; i--) {
+                            for (int j = 0; j < (hiWidth - 1); j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i - N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < hiWidth; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 2) {
+                        for (int i = hiHeight - 1; i >= N; i--) {
+                            for (int j = 0; j < (hiWidth - 1); j++) {
+                                chip8.hiPlane2[i][j] = chip8.hiPlane2[i - N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < hiWidth; j++) {
+                                chip8.hiPlane2[i][j] = false;
+                            } 
+                        }
+                    } else if (chip8.selectedPlane == 3) {
+                        for (int i = hiHeight - 1; i >= N; i--) {
+                            for (int j = 0; j < (hiWidth - 1); j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i - N][j];
+                                chip8.hiPlane2[i][j] = chip8.hiPlane2[i - N][j];
+                            } 
+                        }
+
+                        for (int i = 0; i < N; i++) {
+                            for (int j = 0; j < hiWidth; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                                chip8.hiPlane2[i][j] = false;
+                            } 
+                        }
+                    }
+                }
+}
+void scrollLeft(cpu& chip8) {
+                if (chip8.selectedPlane == 1) {
+                    if (!chip8.hires) {
+                        for (int i = 0; i < lowHeight; i++) {
+                            for (int j = 0 ; j < lowWidth - 4; j++) {
+                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j + 4];  
+                            }
+                        }
+
+                        //clean 4 leftmost columns
+                        for (int i = 0; i < lowHeight; i++) {
+                            for (int j = lowWidth - 4; j < lowWidth - 1; j++) {
+                                chip8.lowPlane1[i][j] = false;
+                            }
+                        }
+
+                    } else {
+                        for (int i = 0; i < hiHeight; i++) {
+                            for (int j = 0; j < hiWidth - 4; j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j + 4];  
+                            }
+                        }
+
+                        //clean 4 leftmost columns
+                        for (int i = 0; i < hiHeight; i++) {
+                            for (int j = hiWidth - 4; j < hiWidth - 1; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                            }
+                        }
+
+                    }
+                } else if (chip8.selectedPlane == 2) {
+                    if (!chip8.hires) {
+                        for (int i = 0; i < lowHeight; i++) {
+                            for (int j = 0 ; j < lowWidth - 4; j++) {
+                                chip8.lowPlane2[i][j] = chip8.lowPlane2[i][j + 4];  
+                            }
+                        }
+
+                        //clean 4 leftmost columns
+                        for (int i = 0; i < lowHeight; i++) {
+                            for (int j = lowWidth - 4; j < lowWidth - 1; j++) {
+                                chip8.lowPlane2[i][j] = false;
+                            }
+                        }
+
+                    } else {
+                        for (int i = 0; i < hiHeight; i++) {
+                            for (int j = 0; j < hiWidth - 4; j++) {
+                                chip8.hiPlane2[i][j] = chip8.hiPlane2[i][j + 4];  
+                            }
+                        }
+
+                        //clean 4 leftmost columns
+                        for (int i = 0; i < hiHeight; i++) {
+                            for (int j = hiWidth - 4; j < hiWidth - 1; j++) {
+                                chip8.hiPlane2[i][j] = false;
+                            }
+                        }
+
+                    }
+                } else if (chip8.selectedPlane == 3) {
+                    if (!chip8.hires) {
+                        for (int i = 0; i < lowHeight; i++) {
+                            for (int j = 0 ; j < lowWidth - 4; j++) {
+                                chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j + 4];  
+                                chip8.lowPlane2[i][j] = chip8.lowPlane2[i][j + 4];  
+                            }
+                        }
+
+                        //clean 4 leftmost columns
+                        for (int i = 0; i < lowHeight; i++) {
+                            for (int j = lowWidth - 4; j < lowWidth - 1; j++) {
+                                chip8.lowPlane1[i][j] = false;
+                                chip8.lowPlane2[i][j] = false;
+                            }
+                        }
+
+                    } else {
+                        for (int i = 0; i < hiHeight; i++) {
+                            for (int j = 0; j < hiWidth - 4; j++) {
+                                chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j + 4]; 
+                                chip8.hiPlane2[i][j] = chip8.hiPlane2[i][j + 4];  
+                            }
+                        }
+
+                        //clean 4 leftmost columns
+                        for (int i = 0; i < hiHeight; i++) {
+                            for (int j = hiWidth - 4; j < hiWidth - 1; j++) {
+                                chip8.hiPlane1[i][j] = false;
+                                chip8.hiPlane2[i][j] = false;
+                            }
+                        }
+
+                    }
+                }
+}
+void scrollRight(cpu& chip8) {
+    if (!chip8.hires) {
+                        if (chip8.selectedPlane == 1) {
+                            for (int i = 0; i < lowHeight; i++) {
+                                for (int j = lowWidth - 1; j >= 4; j--) {
+                                    chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j - 4];  
+                                }
+                            }
+
+                            //clean 4 rightmost columns
+                            for (int i = 0; i < lowHeight; i++) {
+                                for (int j = lowWidth - 4; j < lowWidth; j++) {
+                                    chip8.lowPlane1[i][j] = false;
+                                }
+                            }
+                        } else if (chip8.selectedPlane == 2) {
+                            for (int i = 0; i < lowHeight; i++) {
+                                for (int j = lowWidth - 1; j >= 4; j--) {
+                                    chip8.lowPlane2[i][j] = chip8.lowPlane2[i][j - 4];  
+                                }
+                            }
+
+                            //clean 4 rightmost columns
+                            for (int i = 0; i < lowHeight; i++) {
+                                for (int j = lowWidth - 4; j < lowWidth; j++) {
+                                    chip8.lowPlane2[i][j] = false;
+                                }
+                            }
+                        } else if (chip8.selectedPlane == 3) {
+                            for (int i = 0; i < lowHeight; i++) {
+                                for (int j = lowWidth - 1; j >= 4; j--) {
+                                    chip8.lowPlane1[i][j] = chip8.lowPlane1[i][j - 4];  
+                                    chip8.lowPlane2[i][j] = chip8.lowPlane2[i][j - 4];  
+                                }
+                            }
+
+                            //clean 4 rightmost columns
+                            for (int i = 0; i < lowHeight; i++) {
+                                for (int j = lowWidth - 4; j < lowWidth; j++) {
+                                    chip8.lowPlane1[i][j] = false;
+                                    chip8.lowPlane2[i][j] = false;
+                                }
+                            }
+                        }
+
+                    } else {
+                        if (chip8.selectedPlane == 1) {
+                            for (int i = 0; i < hiHeight; i++) {
+                                for (int j = hiWidth - 1; j >= 4; j--) {
+                                    chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j - 4];  
+                                }
+                            }
+
+                            //clean 4 rightmost columns
+                            for (int i = 0; i < hiHeight; i++) {
+                                for (int j = hiWidth - 4; j < hiWidth; j++) {
+                                    chip8.hiPlane1[i][j] = false;
+                                }
+                            }
+                        } else if (chip8.selectedPlane == 2) {
+                            for (int i = 0; i < hiHeight; i++) {
+                                for (int j = hiWidth - 1; j >= 4; j--) {
+                                    chip8.hiPlane2[i][j] = chip8.hiPlane2[i][j - 4];  
+                                }
+                            }
+
+                            //clean 4 rightmost columns
+                            for (int i = 0; i < hiHeight; i++) {
+                                for (int j = hiWidth - 4; j < hiWidth; j++) {
+                                    chip8.hiPlane2[i][j] = false;
+                                }
+                            }
+                        } else if (chip8.selectedPlane == 3) {
+                            for (int i = 0; i < hiHeight; i++) {
+                                for (int j = hiWidth - 1; j >= 4; j--) {
+                                    chip8.hiPlane1[i][j] = chip8.hiPlane1[i][j - 4]; 
+                                    chip8.hiPlane2[i][j] = chip8.hiPlane2[i][j - 4];   
+                                }
+                            }
+
+                            //clean 4 rightmost columns
+                            for (int i = 0; i < hiHeight; i++) {
+                                for (int j = hiWidth - 4; j < hiWidth; j++) {
+                                    chip8.hiPlane1[i][j] = false;
+                                    chip8.hiPlane2[i][j] = false;
+                                }
+                            }
+                        }
+                    }
 }
