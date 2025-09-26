@@ -8,6 +8,7 @@
 #include <raylib.h>
 #include <cstdlib>
 #include <iomanip>
+#include <cmath>
 
 
 //chip-8
@@ -45,7 +46,9 @@ class cpu {
     public:
 
             //memory
-        uint8_t audioBuffer[16];
+        uint8_t audioBuffer[16] = {
+            0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0, 0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0
+        };
         uint16_t stack[16];
         uint8_t mem[MEM_SIZE] = {
         
@@ -124,7 +127,7 @@ class cpu {
         bool paused = false;
 
             //attributes
-        int audioPitch = 1000; //1000hz by default
+        double audioPitch = 4000.0; //1000hz by default
 
 };
 
@@ -135,16 +138,32 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
 
     cpu* chip8 = (cpu*)pDevice->pUserData;
 
+    static size_t bufferPosition = 0;
+    static double phase = 0.0;
+
     double phase_increment = 2.0 * MA_PI * (double)chip8->audioPitch / (double)48000;
 
-    static double time = 0.0;
-
     for (ma_uint32 i = 0; i < frameCount; ++i) {
-        float sample = sin(time) * 0.5f;
+        uint8_t patternByte = chip8->audioBuffer[bufferPosition];
+        
+        float sample = (phase < MA_PI) ? 0.3f : -0.3f; 
+
+        if (patternByte == 0x00) {
+            sample = 0.0f;
+        }
+        
         *pOutputF++ = sample;
-        time += phase_increment;
+        
+
+        phase += phase_increment;
+        if (phase >= 2.0 * MA_PI) {
+            phase -= 2.0 * MA_PI;
+
+            bufferPosition = (bufferPosition + 1) % 16;
+        }
     }
-    
+
+
     (void)pInput; 
     }
 
@@ -994,10 +1013,14 @@ void cycle(cpu& chip8) {
                 case 0x3A:
                     {
 
-                    std::cout << "AUDIO PITCH CHANGE!!!";
-
-                }
+                    // Calculate: 4000 * 2^((vX - 64) / 48)
+                    double exponent = (static_cast<double>(chip8.regs[X]) - 64.0) / 48.0;
+                    chip8.audioPitch = 4000.0 * std::pow(2.0, exponent);
+    
+                    std::cout << "Audio pitch changed to: " << chip8.audioPitch << " Hz (vX=" << (int)chip8.regs[X] << ")\n";
                     break;
+                }
+                    
                 case 0x55: //save
 
                     for (int i = 0; i <= X; ++i) {
