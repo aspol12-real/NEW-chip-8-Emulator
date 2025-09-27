@@ -10,7 +10,7 @@ GitHub:        https://github.com/mackron/miniaudio
 */
 
 /*
-1. Introduction
+1. Introduction!
 ===============
 To use miniaudio, just include "miniaudio.h" like any other header and add "miniaudio.c" to your
 source tree. If you don't want to add it to your source tree you can compile and link to it like
