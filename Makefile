@@ -1,9 +1,18 @@
 CXX = g++
-SRC = src/main.cpp
-EXEC = chip8
+CXXFLAGS = -std=c++14
+
 LDFLAGS = -lraylib -lGL -lm -lpthread -ldl -lrt 
 
-all: $(EXEC)
+SOURCES = src/main.cpp src/cpu.cpp src/mmu.cpp src/apu.cpp src/ppu.cpp
+OBJECTS = $(SOURCES:.cpp=.o)
 
-$(EXEC): $(SRC)
-	$(CXX) $(SRC) -o $(EXEC) $(LDFLAGS)
+gb: $(OBJECTS)
+	$(CXX) $^ -o $@ $(LDFLAGS)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -f src/*.o gb
+
+.PHONY: clean
